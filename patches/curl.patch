@@ -1839,19 +1839,22 @@ index d60bdaed7b..fe9d1e7517 100644
  /*
   * curl_easy_init() is the external interface to alloc, setup and init an
   * easy handle that is returned. If anything goes wrong, NULL is returned.
-@@ -331,6 +718,8 @@ CURL *curl_easy_init(void)
+@@ -331,6 +718,10 @@ CURL *curl_easy_init(void)
  {
    CURLcode result;
    struct Curl_easy *data;
++#ifndef CURL_IMPERSONATE_DISABLE_ENV_HOOK
 +  char *env_target = NULL;
 +  char *env_headers = NULL;
++#endif
  
    /* Make sure we inited the global SSL stuff */
    global_init_lock();
-@@ -353,6 +742,30 @@ CURL *curl_easy_init(void)
+@@ -353,6 +744,32 @@ CURL *curl_easy_init(void)
      return NULL;
    }
  
++#ifndef CURL_IMPERSONATE_DISABLE_ENV_HOOK
 +  /*
 +   * curl-impersonate: Hook into curl_easy_init() to set the required options
 +   * from an environment variable.
@@ -1875,11 +1878,12 @@ index d60bdaed7b..fe9d1e7517 100644
 +      return NULL;
 +    }
 +  }
++#endif
 +
    return data;
  }
  
-@@ -1027,6 +1440,13 @@ CURL *curl_easy_duphandle(CURL *curl)
+@@ -1027,6 +1444,13 @@ CURL *curl_easy_duphandle(CURL *curl)
        goto fail;
    }
  
@@ -1893,20 +1897,23 @@ index d60bdaed7b..fe9d1e7517 100644
    /* Reinitialize an SSL engine for the new handle
     * note: the engine name has already been copied by dupset */
    if(outcurl->set.str[STRING_SSL_ENGINE]) {
-@@ -1088,6 +1508,9 @@ fail:
+@@ -1088,6 +1512,11 @@ fail:
   */
  void curl_easy_reset(CURL *curl)
  {
++#ifndef CURL_IMPERSONATE_DISABLE_ENV_HOOK
 +  char *env_target;
 +  char *env_headers;
++#endif
 +
    struct Curl_easy *data = curl;
    if(!GOOD_EASY_HANDLE(data))
      return;
-@@ -1120,6 +1543,23 @@ void curl_easy_reset(CURL *curl)
+@@ -1120,6 +1549,25 @@ void curl_easy_reset(CURL *curl)
    Curl_http_auth_cleanup_digest(data);
  #endif
    data->master_mid = UINT32_MAX;
++#ifndef CURL_IMPERSONATE_DISABLE_ENV_HOOK
 +  /*
 +   * curl-impersonate: Hook into curl_easy_reset() to set the required options
 +   * from an environment variable, just like in curl_easy_init().
@@ -1924,6 +1931,7 @@ index d60bdaed7b..fe9d1e7517 100644
 +    }
 +    curlx_free(env_target);
 +  }
++#endif
  }
  
  /*
