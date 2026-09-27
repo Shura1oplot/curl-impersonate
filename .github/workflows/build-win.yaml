@@ -20,6 +20,7 @@ env:
     LICENSE
     LICENSE_BORINGSSL
     LICENSE_BROTLI
+    LICENSE_CARES
     LICENSE_CURL
     LICENSE_NGHTTP2
     LICENSE_NGHTTP3
@@ -53,9 +54,9 @@ jobs:
       - name: Check out the repo
         uses: actions/checkout@v2
 
-      - name: Install NASM
+      - name: Install NASM and Make
         shell: cmd
-        run: choco install nasm -y
+        run: choco install nasm make -y
 
       - name: Install Ninja for Win-ARM64
         shell: pwsh
@@ -72,10 +73,16 @@ jobs:
         shell: cmd
         run: ./win/build.bat ${{ matrix.sys }}
 
+      - name: Check build
+        shell: bash
+        run: make checkbuild CURL_BIN=packages/bin/curl-impersonate.exe
+
       - name: Build tarballs
         shell: bash
         run: |
           set -euo pipefail
+          cmake -P build/CollectLicenses.cmake
+          license_dir="$GITHUB_WORKSPACE/build/licenses"
           suffix="${{ matrix.env }}-win32"
           if [[ "${{ startsWith(github.ref, 'refs/tags/') }}" == "true" ]]; then
             ver="${{ github.head_ref || github.ref_name }}"
@@ -85,8 +92,8 @@ jobs:
             curl_tar="curl-impersonate-${suffix}.tar.gz"
             lib_tar="libcurl-impersonate-${suffix}.tar.gz"
           fi
-          tar -czf "$curl_tar" -C packages/bin . -C "$GITHUB_WORKSPACE/packages" $LICENSE_FILES
-          tar -czf "$lib_tar" -C packages lib include $LICENSE_FILES
+          tar -czf "$curl_tar" -C packages/bin . -C "$license_dir" $LICENSE_FILES
+          tar -czf "$lib_tar" -C packages lib include -C "$license_dir" $LICENSE_FILES
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

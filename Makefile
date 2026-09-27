@@ -7,6 +7,8 @@ CMAKE_BUILD_ARGS ?=
 CMAKE_INSTALL_ARGS ?=
 TARGET ?= curl-impersonate
 CURL_BIN ?= $(BUILD_DIR)/deps/build/curl/src/curl-impersonate
+CURL_RUNNER ?=
+CHECK_IDN ?= 1
 LIBIDN2_VERSION ?= 2.3.7
 LIBIDN2_URL ?= https://ftp.gnu.org/gnu/libidn/libidn2-$(LIBIDN2_VERSION).tar.gz
 
@@ -35,14 +37,16 @@ target: configure
 
 checkbuild:
 	@test -x "$(CURL_BIN)" || { echo "Missing binary: $(CURL_BIN)"; exit 1; }
-	@v="$$( "$(CURL_BIN)" -V )"; \
+	@set -e; v="$$( $(CURL_RUNNER) "$(CURL_BIN)" -V )"; \
 	echo "$$v"; \
 	echo "$$v" | grep -q zlib; \
 	echo "$$v" | grep -q zstd; \
 	echo "$$v" | grep -q brotli; \
 	echo "$$v" | grep -q nghttp2; \
 	echo "$$v" | grep -q BoringSSL; \
-	echo "$$v" | grep -Eq "AppleIDN|libidn2"; \
+	echo "$$v" | grep -q proxy-HTTP3; \
+	if [ "$(CHECK_IDN)" = "1" ]; then echo "$$v" | grep -q IDN; fi; \
+	echo "$$v" | grep -q c-ares; \
 	echo "Build OK"
 .PHONY: checkbuild
 
