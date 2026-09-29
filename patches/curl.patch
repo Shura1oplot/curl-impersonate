@@ -161,7 +161,7 @@ index 693d93d014..25a7f41b13 100644
 -      list(APPEND CMAKE_REQUIRED_LIBRARIES "stdc++")
 +    if(OPENSSL_USE_STATIC_LIBS AND
 +       CMAKE_C_COMPILER_ID MATCHES "Clang" AND NOT MSVC)
-+      if(APPLE OR BSD OR ANDROID)
++      if(APPLE OR BSD OR ANDROID OR CMAKE_CXX_FLAGS MATCHES "(^| )-stdlib=libc[+][+]($| )")
 +        set(_cxx_runtime_lib "c++")
 +      else()
 +        set(_cxx_runtime_lib "stdc++")
