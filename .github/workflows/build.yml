@@ -83,6 +83,13 @@ jobs:
             make: make
           - os: ubuntu-latest
             platform: linux
+            arch: arm
+            host: arm-linux-gnueabi
+            host_label: arm-linux-gnueabi
+            zigflags: -target arm-linux-gnueabi
+            make: make
+          - os: ubuntu-latest
+            platform: linux
             arch: riscv64
             host: riscv64-linux-gnu
             host_label: riscv64-linux-gnu
@@ -106,6 +113,18 @@ jobs:
             arch: x86_64
             host: x86_64-linux-android
             host_label: x86_64-linux-android
+            make: make
+          - os: ubuntu-latest
+            platform: android
+            arch: x86
+            host: i686-linux-android
+            host_label: x86-linux-android
+            make: make
+          - os: ubuntu-latest
+            platform: android
+            arch: armv7
+            host: armv7a-linux-androideabi
+            host_label: armv7-linux-android
             make: make
           - os: macos-14
             platform: ios
@@ -149,7 +168,7 @@ jobs:
 
       - name: Set up zig
         if: matrix.platform == 'linux'
-        uses: goto-bus-stop/setup-zig@v2
+        uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
 
@@ -214,16 +233,13 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install build-essential pkg-config cmake ninja-build curl autoconf automake libtool gperf qemu-user libc6-i386-cross
-          sudo apt-get install gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf gcc-riscv64-linux-gnu gcc-14-loongarch64-linux-gnu
-          sudo apt-get install golang-go
+          sudo apt-get install build-essential pkg-config cmake ninja-build curl qemu-user libc6-i386-cross
+          sudo apt-get install gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi gcc-riscv64-linux-gnu gcc-14-loongarch64-linux-gnu
 
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
         run: |
-          brew install pkg-config make cmake ninja autoconf automake libtool gpatch gperf
-          # Chrome version dependencies, install only not installed.
-          which go || brew install go
+          brew install pkg-config make cmake ninja
           # Dependencies for the tests
           brew install tcpdump curl nghttp2
 
@@ -233,6 +249,12 @@ jobs:
           install_dir="${{ runner.temp }}/install"
           mkdir -p "$install_dir"
 
+          if [[ "${{ matrix.host }}" == "arm-linux-gnueabi" ]]; then
+            LDFLAGS="$("${{ github.workspace }}/zigshim/atomics/arm_linux_gnueabi_prepare.sh")"
+            export LDFLAGS
+            echo "LDFLAGS=$LDFLAGS" >> $GITHUB_ENV
+          fi
+
           cmake_args="-G Ninja -DCMAKE_INSTALL_PREFIX=$install_dir"
           if [[ "${{ matrix.platform }}" == "linux" ]]; then
             cmake_args="$cmake_args -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=${{ matrix.arch }}"
@@ -240,6 +262,8 @@ jobs:
           elif [[ "${{ matrix.platform }}" == "android" ]]; then
             case "${{ matrix.arch }}" in
               aarch64) android_abi="arm64-v8a" ;;
+              armv7) android_abi="armeabi-v7a" ;;
+              x86) android_abi="x86" ;;
               x86_64) android_abi="x86_64" ;;
               *) echo "Unsupported Android arch: ${{ matrix.arch }}"; exit 1 ;;
             esac
@@ -301,7 +325,9 @@ jobs:
             license_files="$license_files LICENSE_LIBIDN2_GPL2 LICENSE_LIBIDN2_GPL3 LICENSE_LIBIDN2_LGPL3 LICENSE_LIBIDN2_UNICODE"
           fi
 
-          cp "$deps_lib_dir/libcares.a" "$install_lib_dir/"
+          if [[ "${{ matrix.platform }}" != "android" ]]; then
+            cp "$deps_lib_dir/libcares.a" "$install_lib_dir/"
+          fi
           cp "$deps_lib_dir/libz.a" "$install_lib_dir/"
           cp "$deps_lib_dir/libzstd.a" "$install_lib_dir/"
           cp "$deps_lib_dir/libbrotlidec.a" "$install_lib_dir/"
@@ -319,9 +345,20 @@ jobs:
 
           cd "$install_lib_dir"
           mv libcurl-impersonate.a libcurl-impersonate.orig.a
-          lib_list="libcurl-impersonate.orig.a libz.a libzstd.a libbrotlidec.a libbrotlicommon.a libbrotlienc.a libnghttp2.a libnghttp3.a libngtcp2.a libngtcp2_crypto_boringssl.a libssl.a libcrypto.a libcares.a"
+          lib_list="libcurl-impersonate.orig.a libz.a libzstd.a libbrotlidec.a libbrotlicommon.a libbrotlienc.a libnghttp2.a libnghttp3.a libngtcp2.a libngtcp2_crypto_boringssl.a libssl.a libcrypto.a"
+          if [[ "${{ matrix.platform }}" != "android" ]]; then
+            lib_list="$lib_list libcares.a"
+          fi
           if [[ -f libidn2.a ]]; then
             lib_list="$lib_list libidn2.a"
+          fi
+          if [[ "${{ matrix.platform }}" == "macos" ]]; then
+            cmake \
+              "-DINPUT_PC=${{ github.workspace }}/build/deps/build/curl/libcurl.pc" \
+              "-DDEPENDENCY_PREFIX=${{ github.workspace }}/build/deps/install" \
+              "-DLIBRARY_DIR=$install_lib_dir" \
+              "-DARCHIVES=${lib_list// /;}" \
+              -P "${{ github.workspace }}/cmake/ReleasePkgConfig.cmake"
           fi
           if [[ "${{ runner.os }}" == "macOS" || "${{ matrix.platform }}" == "ios" ]]; then
             libtool -static -o libcurl-impersonate.a $lib_list
@@ -360,11 +397,12 @@ jobs:
           rm -f libcurl-impersonate.orig.a
           ls -lah .
           if [[ "${{ startsWith(github.ref, 'refs/tags/') }}" == "true" ]]; then
-            tar -c -z -f ${{ runner.temp }}/libcurl-impersonate-${{ github.ref_name }}.${{ matrix.host_label }}.tar.gz -C "$install_lib_dir" lib* -C "$install_dir" include -C "$license_dir" $license_files
+            release_file_lib="${{ runner.temp }}/libcurl-impersonate-${{ github.ref_name }}.${{ matrix.host_label }}.tar.gz"
           else
-            tar -c -z -f ${{ runner.temp }}/libcurl-impersonate.${{ matrix.host_label }}.tar.gz -C "$install_lib_dir" lib* -C "$install_dir" include -C "$license_dir" $license_files
+            release_file_lib="${{ runner.temp }}/libcurl-impersonate.${{ matrix.host_label }}.tar.gz"
           fi
-          echo "release_file_lib=${{ runner.temp }}/libcurl-impersonate-${{ github.ref_name }}.${{ matrix.host_label }}.tar.gz" >> $GITHUB_ENV
+          tar -c -z -f "$release_file_lib" -C "$install_lib_dir" lib* -C "$install_dir" include -C "$license_dir" $license_files
+          echo "release_file_lib=$release_file_lib" >> $GITHUB_ENV
 
           cd "$install_dir/bin"
           if [[ "${{ startsWith(github.ref, 'refs/tags/') }}" == "true" ]]; then
@@ -372,6 +410,18 @@ jobs:
           else
             tar -c -z -f ${{ runner.temp }}/curl-impersonate.${{ matrix.host_label }}.tar.gz curl-impersonate curl_* -C "$license_dir" $license_files
           fi
+
+      - name: Verify macOS release pkg-config
+        if: matrix.platform == 'macos'
+        run: |
+          release_dir="$RUNNER_TEMP/release with spaces"
+          mkdir -p "$release_dir"
+          tar -xzf "$release_file_lib" -C "$release_dir"
+          cmake -S tests/pkgconfig -B "$RUNNER_TEMP/pkgconfig-consumer" \
+            -DRELEASE_DIR="$release_dir" \
+            -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
+          cmake --build "$RUNNER_TEMP/pkgconfig-consumer"
+          ctest --test-dir "$RUNNER_TEMP/pkgconfig-consumer" --output-on-failure
 
       - name: Create iOS XCFramework slice
         if: matrix.platform == 'ios'
@@ -412,6 +462,10 @@ jobs:
             vm_arch: aarch64
             host_label: aarch64-freebsd
             release_only: true
+          - os: FreeBSD
+            vm_arch: riscv64
+            host_label: riscv64-freebsd
+            release_only: true
           - os: OpenBSD
             vm_arch: x86_64
             host_label: x86_64-openbsd
@@ -437,7 +491,7 @@ jobs:
         uses: vmactions/freebsd-vm@v1
         if: ${{ matrix.os == 'FreeBSD' && (!matrix.release_only || startsWith(github.ref, 'refs/tags/')) }}
         with:
-          release: "14.3"
+          release: "15.1"
           arch: ${{ matrix.vm_arch }}
           cpu: 4
           mem: 8192
@@ -445,13 +499,13 @@ jobs:
           prepare: |
             export IGNORE_OSVERSION=yes
             pkg update -f
-            pkg install -y pkgconf cmake ninja curl autoconf automake libtool gmake gperf go
+            pkg install -y pkgconf cmake-core ninja gmake
 
       - name: Start OpenBSD VM
         uses: vmactions/openbsd-vm@v1
         if: ${{ matrix.os == 'OpenBSD' && (!matrix.release_only || startsWith(github.ref, 'refs/tags/')) }}
         with:
-          release: "7.9"
+          release: "8.0"
           arch: ${{ matrix.vm_arch }}
           cpu: 4
           mem: 8192

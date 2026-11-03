@@ -23,8 +23,8 @@ endif()
 set(SUBJOBS "${_nproc}" CACHE STRING "Parallel build jobs")
 
 # Versions and URLs
-set(BROTLI_VERSION "1.2.0")
-set(BROTLI_URL_HASH "SHA256=816c96e8e8f193b40151dad7e8ff37b1221d019dbcb9c35cd3fadbfe6477dfec")
+set(BROTLI_VERSION "1.2.1")
+set(BROTLI_URL_HASH "SHA256=98d35d11a78dc453aebb7d10c3748f3f73ff78c8267c0dc697b8631f67bf7e8f")
 # Chrome 150
 set(BORINGSSL_COMMIT "156c7b75ae9b8c3b3f847acf264f17594c3859fb")
 set(BORINGSSL_URL_HASH "SHA256=450e169b284697c6eafe523cb7679f4221fbe1a0993f773a566c33b188762844")
@@ -36,14 +36,14 @@ set(NGTCP2_VERSION "1.20.0")
 set(NGTCP2_URL_HASH "SHA256=871ec97ad86803cf312901b0c393b0ee70163e25a87c9b2894d1234341ce4e97")
 set(NGHTTP3_VERSION "1.15.0")
 set(NGHTTP3_URL_HASH "SHA256=c6c491a52804814098e446630e6efc459afc0d3da7952ffe6cbdc0b3f99b2b62")
-set(ZLIB_VERSION "1.3.1")
-set(ZLIB_URL_HASH "SHA256=9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23")
+set(ZLIB_VERSION "1.3.2")
+set(ZLIB_URL_HASH "SHA256=bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16")
 set(ZSTD_VERSION "1.5.7")
 set(ZSTD_URL_HASH "SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3")
-set(CARES_VERSION "1.34.8")
-set(CARES_URL_HASH "SHA256=c222b6d681096f9444d2c4863d2c1174019e27cacca0a4a5c114d36dd7d7bf78")
-set(CURL_VERSION "curl-8_22_0")
-set(CURL_URL_HASH "SHA256=222c6b5c1f368ac63aed59bce2774eb5def9e8e67e46e800be182e684d2845a3")
+set(CARES_VERSION "1.34.9")
+set(CARES_URL_HASH "SHA256=9364b70a12eb59a06830fb488d9357f90100dff0d98b23ea3593a183d43e6f2f")
+set(CURL_VERSION "curl-8_23_0")
+set(CURL_URL_HASH "SHA256=d0605d5883124ef5ae64c6d2b307e1417c482b362583b57491fdf37d9a99a792")
 
 set(CURL_IMPERSONATE_VERSION "" CACHE STRING
   "Override the curl-impersonate version (defaults to an exact clean Git tag or local)")
@@ -93,11 +93,20 @@ if(WIN32)
   string(TOLOWER "${CMAKE_C_COMPILER_TARGET}" _ci_c_target_lc)
   string(TOLOWER "${CMAKE_CXX_COMPILER_TARGET}" _ci_cxx_target_lc)
   string(TOLOWER "${CMAKE_GENERATOR_PLATFORM}" _ci_generator_platform_lc)
-  if(_ci_system_processor_lc MATCHES "arm64|aarch64"
-      OR _ci_c_target_lc MATCHES "arm64|aarch64"
-      OR _ci_cxx_target_lc MATCHES "arm64|aarch64"
-      OR _ci_generator_platform_lc MATCHES "arm64")
-    set(_disable_boringssl_asm_default ON)
+  if(MSVC OR (CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC"
+      OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC"))
+    if(_ci_system_processor_lc MATCHES "arm64|aarch64"
+        OR _ci_c_target_lc MATCHES "arm64|aarch64"
+        OR _ci_cxx_target_lc MATCHES "arm64|aarch64"
+        OR _ci_generator_platform_lc MATCHES "arm64")
+      set(_disable_boringssl_asm_default ON)
+    endif()
+  elseif(MINGW)
+    if(_ci_system_processor_lc MATCHES "^arm$|armv7"
+        OR _ci_c_target_lc MATCHES "^arm$|armv7"
+        OR _ci_cxx_target_lc MATCHES "^arm$|armv7")
+      set(_disable_boringssl_asm_default ON)
+    endif()
   endif()
 endif()
 option(DISABLE_BORINGSSL_ASM "Disable BoringSSL asm (arm64 workaround)" ${_disable_boringssl_asm_default})
@@ -190,6 +199,12 @@ if(CMAKE_MSVC_RUNTIME_LIBRARY)
     "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW"
   )
 endif()
+if(MINGW)
+  list(APPEND _toolchain_cmake_args
+    "-DCMAKE_EXE_LINKER_FLAGS=-static"
+    "-DCMAKE_SHARED_LINKER_FLAGS=-static"
+  )
+endif()
 if(CMAKE_LINKER)
   list(APPEND _toolchain_cmake_args "-DCMAKE_LINKER=${CMAKE_LINKER}")
 endif()
@@ -258,8 +273,8 @@ ExternalProject_Add(zlib
   CMAKE_ARGS
     ${_common_cmake_args}
     -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
-    -DBUILD_SHARED_LIBS=OFF
-    -DZLIB_BUILD_EXAMPLES=OFF
+    -DZLIB_BUILD_SHARED=OFF
+    -DZLIB_BUILD_TESTING=OFF
   BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --config Release --parallel ${SUBJOBS}
 )
 
@@ -324,6 +339,9 @@ set(_boringssl_cmake_args
 if(DISABLE_BORINGSSL_ASM)
   list(APPEND _boringssl_cmake_args -DOPENSSL_NO_ASM=ON)
 endif()
+if(CMAKE_ASM_NASM_COMPILER)
+  list(APPEND _boringssl_cmake_args "-DCMAKE_ASM_NASM_COMPILER=${CMAKE_ASM_NASM_COMPILER}")
+endif()
 
 _track_external_project_patch(
   boringssl _boringssl_patch_file _boringssl_patch_changed
@@ -342,7 +360,8 @@ ExternalProject_Add(boringssl
 ExternalProject_Get_Property(boringssl source_dir binary_dir)
 set(BORINGSSL_SRC_DIR "${source_dir}")
 set(BORINGSSL_BIN_DIR "${binary_dir}")
-if(WIN32)
+if(MSVC OR (CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC"
+    OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC"))
   set(BORINGSSL_SSL_LIB "${DEPS_INSTALL_DIR}/lib/ssl.lib")
   set(BORINGSSL_CRYPTO_LIB "${DEPS_INSTALL_DIR}/lib/crypto.lib")
 else()
@@ -352,7 +371,8 @@ endif()
 set(BORINGSSL_INCLUDE_DIR "${BORINGSSL_SRC_DIR}/include")
 
 set(_ngtcp2_boringssl_libs_arg)
-if(WIN32)
+if(MSVC OR (CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC"
+    OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC"))
   list(APPEND _ngtcp2_boringssl_libs_arg "-DBORINGSSL_LIBRARIES=${BORINGSSL_SSL_LIB}|${BORINGSSL_CRYPTO_LIB}")
 endif()
 
@@ -498,21 +518,34 @@ if(NOT CURL_CA_PATH STREQUAL "")
   list(APPEND _curl_ca_flags "-DCURL_CA_PATH=${CURL_CA_PATH}")
 endif()
 
-set(_curl_deps zlib zstd brotli boringssl nghttp2 ngtcp2 nghttp3 cares)
-set(_curl_resolver_flags
-  -DENABLE_ARES=ON
-  -DENABLE_THREADED_RESOLVER=OFF
-  -DCARES_USE_STATIC_LIBS=ON
-  -DCURL_USE_CMAKECONFIG=ON
-  "-Dc-ares_DIR=${DEPS_INSTALL_DIR}/lib/cmake/c-ares"
-)
+set(_curl_deps zlib zstd brotli boringssl nghttp2 ngtcp2 nghttp3)
+
+if(ANDROID)
+  set(_curl_resolver_flags
+    -DENABLE_ARES=OFF
+    -DENABLE_THREADED_RESOLVER=ON
+  )
+else()
+  list(APPEND _curl_deps cares)
+  set(_curl_resolver_flags
+    -DENABLE_ARES=ON
+    -DENABLE_THREADED_RESOLVER=OFF
+    -DCARES_USE_STATIC_LIBS=ON
+    -DCURL_USE_CMAKECONFIG=ON
+    "-Dc-ares_DIR=${DEPS_INSTALL_DIR}/lib/cmake/c-ares"
+  )
+endif()
 if(USE_LIBIDN2)
   list(APPEND _curl_deps libidn2)
 endif()
 
-if(WIN32)
-  set(_curl_zlib_library "${DEPS_INSTALL_DIR}/lib/zlibstatic.lib")
+if(MSVC OR (CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC"
+    OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC"))
+  set(_curl_zlib_library "${DEPS_INSTALL_DIR}/lib/zs.lib")
   set(_curl_zstd_library "${DEPS_INSTALL_DIR}/lib/zstd_static.lib")
+elseif(MINGW)
+  set(_curl_zlib_library "${DEPS_INSTALL_DIR}/lib/libzs.a")
+  set(_curl_zstd_library "${DEPS_INSTALL_DIR}/lib/libzstd.a")
 else()
   set(_curl_zlib_library "${DEPS_INSTALL_DIR}/lib/libz.a")
   set(_curl_zstd_library "${DEPS_INSTALL_DIR}/lib/libzstd.a")
@@ -521,7 +554,8 @@ endif()
 set(_curl_staged_dependency_args
   "-DCMAKE_PREFIX_PATH=${DEPS_INSTALL_DIR}"
 )
-if(NOT WIN32)
+if(NOT (MSVC OR (CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC"
+      OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")))
   set(_curl_c_flags "${CMAKE_C_FLAGS}")
   set(_curl_cxx_flags "${CMAKE_CXX_FLAGS}")
   string(PREPEND _curl_c_flags "-I${DEPS_INSTALL_DIR}/include ")
@@ -563,19 +597,25 @@ endif()
 
 set(_curl_platform_flags)
 if(WIN32)
+  list(APPEND _curl_platform_flags -DENABLE_UNICODE=ON -DCURL_CA_NATIVE=ON)
+endif()
+if(MSVC OR (CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC"
+    OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC"))
   set(_curl_platform_c_flags "${CMAKE_C_FLAGS}")
   string(APPEND _curl_platform_c_flags " /DNGHTTP2_STATICLIB=1 /DNGTCP2_STATICLIB=1 /DNGHTTP3_STATICLIB=1 /Dstrtok_r=strtok_s")
   if(NOT CURL_IMPERSONATE_ENV_HOOK)
     string(APPEND _curl_platform_c_flags " /DCURL_IMPERSONATE_DISABLE_ENV_HOOK")
   endif()
   list(APPEND _curl_platform_flags "-DCMAKE_C_FLAGS=${_curl_platform_c_flags}")
-  list(APPEND _curl_platform_flags -DENABLE_UNICODE=ON)
-  list(APPEND _curl_platform_flags -DCURL_CA_NATIVE=ON)
   if(CMAKE_SIZEOF_VOID_P EQUAL 8)
     list(APPEND _curl_platform_flags "-Dssize_t=__int64")
   else()
     list(APPEND _curl_platform_flags "-Dssize_t=long")
   endif()
+elseif(MINGW)
+  set(_curl_platform_c_flags "${CMAKE_C_FLAGS}")
+  string(APPEND _curl_platform_c_flags " -DNGHTTP2_STATICLIB=1 -DNGTCP2_STATICLIB=1 -DNGHTTP3_STATICLIB=1")
+  list(APPEND _curl_platform_flags "-DCMAKE_C_FLAGS=${_curl_platform_c_flags}")
 elseif(APPLE)
   list(APPEND _curl_platform_flags "-DUSE_APPLE_SECTRUST=${USE_APPLE_SECTRUST}")
 endif()
@@ -620,11 +660,15 @@ ExternalProject_Add(curl
       -DCMAKE_BUILD_TYPE=Release
       ${_shadow_avoid_cmake_args}
       -DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}
-      -DCMAKE_INSTALL_LIBDIR=lib
+      -DCMAKE_INSTALL_LIBDIR=${CMAKE_INSTALL_LIBDIR}
+      -DCMAKE_INSTALL_INCLUDEDIR=${CMAKE_INSTALL_INCLUDEDIR}
+      -DCMAKE_INSTALL_BINDIR=${CMAKE_INSTALL_BINDIR}
       ${_toolchain_cmake_args}
       -DCMAKE_POSITION_INDEPENDENT_CODE=ON
       ${_curl_staged_dependency_args}
       ${_curl_use_pkgconfig_flag}
+      -DCMAKE_PROJECT_CURL_INCLUDE=${CMAKE_SOURCE_DIR}/cmake/WebCrypto.cmake
+      -DCURL_IMPERSONATE_SOURCE_DIR=${CMAKE_SOURCE_DIR}
       -DCURL_USE_OPENSSL=ON
       -DCURL_ENABLE_SSL=ON
       -DCURL_IMPERSONATE_VERSION=${_curl_impersonate_version}
@@ -684,7 +728,7 @@ add_custom_target(install-all
   COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR}
 )
 
-# Install only runtime artifacts we ship: curl binary, libcurl library, and wrappers.
+# Install runtime artifacts and the files needed by libcurl consumers.
 # Do not call curl's own install target, which also installs docs/manpages.
 if(WIN32)
   install(PROGRAMS "${DEPS_BUILD_DIR}/curl/src/curl-impersonate.exe" DESTINATION ${CMAKE_INSTALL_BINDIR})
@@ -719,6 +763,34 @@ install(
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   FILES_MATCHING
     PATTERN "*.h"
+)
+install(
+  FILES "${CMAKE_SOURCE_DIR}/include/curl-impersonate/webcrypto.h"
+  DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/curl-impersonate"
+)
+# Keep static dependencies private so they do not replace system libraries.
+install(
+  DIRECTORY "${DEPS_INSTALL_DIR}/lib/"
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/curl-impersonate"
+  FILES_MATCHING
+    PATTERN "*.a"
+    PATTERN "*.lib"
+    PATTERN "cmake" EXCLUDE
+    PATTERN "pkgconfig" EXCLUDE
+)
+configure_file(
+  "${CMAKE_SOURCE_DIR}/cmake/PrepareInstallMetadata.cmake.in"
+  "${CMAKE_BINARY_DIR}/PrepareInstallMetadata.cmake"
+  @ONLY
+)
+install(SCRIPT "${CMAKE_BINARY_DIR}/PrepareInstallMetadata.cmake")
+install(
+  FILES "${CMAKE_BINARY_DIR}/install-metadata/libcurl-impersonate.pc"
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig"
+)
+install(
+  PROGRAMS "${CMAKE_BINARY_DIR}/install-metadata/curl-impersonate-config"
+  DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 if(WIN32)
   file(GLOB _curl_wrapper_scripts CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/win/bin/curl_*.bat")
